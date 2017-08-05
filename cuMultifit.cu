@@ -63,7 +63,6 @@ int cuMultifit(const double *X, int n, int p, const double *Y, double *coef, dou
   double alpha_v = 1.0;
   double beta_v = 0.0;
   double *alpha = &alpha_v, *beta = &beta_v; //check!!
-  printf("%f\n", *alpha);
   // d_C = d_X^T d_X
   cublas_status = cublasDgemm(cublasH,
                            CUBLAS_OP_T, CUBLAS_OP_N,
@@ -76,7 +75,6 @@ int cuMultifit(const double *X, int n, int p, const double *Y, double *coef, dou
   cudaStat = cudaDeviceSynchronize();
   assert(cublas_status == CUBLAS_STATUS_SUCCESS);
   assert(cudaSuccess == cudaStat);
-  printf("finish X'X\n");
   // copy d_C to C
   cudaStat = cudaMemcpy(C, d_C, sizeof(double)*p*p, cudaMemcpyDeviceToHost);
   assert(cudaSuccess == cudaStat);
@@ -87,11 +85,7 @@ int cuMultifit(const double *X, int n, int p, const double *Y, double *coef, dou
   cuda_LU_solve(C, p, B->data, p);
   cudaStat = cudaMemcpy(d_C, B->data, sizeof(double)*p*p, cudaMemcpyHostToDevice);
   assert(cudaSuccess == cudaStat);
-  for (int i = 0; i < p*p; i++)
-    printf("%f\n", B->data[i]);
 
-  printf("finish inv(C)\n");
-  printf("%f %f\n", *alpha, *beta);
   // d_Y = d_X^T * d_Y
   cublas_status = cublasDgemv(cublasH, CUBLAS_OP_T,
                            n, p,
@@ -105,9 +99,7 @@ int cuMultifit(const double *X, int n, int p, const double *Y, double *coef, dou
   assert(cudaSuccess == cudaStat);
   cudaStat = cudaMemcpy(coef, d_coef, sizeof(double) * p, cudaMemcpyDeviceToHost);
   assert(cudaSuccess == cudaStat);
-  for (int i = 0 ; i < p ; i ++ )
-    printf("%f\n", coef[i]);
-
+  
   // inv(C) * d_Y
   // due to by-column in gpu while by-row in gsl, C need to be transpose
   cublas_status = cublasDgemv(cublasH, CUBLAS_OP_T,

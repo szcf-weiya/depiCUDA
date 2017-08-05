@@ -9,6 +9,7 @@ source = pureDetectEpi.cpp
 
 all:\
 	out2 \
+	out 
 
 
 cuLUsolve.o: cuLUsolve.h cuLUsolve.cu
