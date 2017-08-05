@@ -227,12 +227,18 @@ int main()
 	    if (coef[k] > MAX_EPS)
 	      flag = 0;
 	  }
+    free(coef);
 	  if (flag == 0)
-	    continue;
-
-	  if (pvalue[2] > MIN_P_VALUE)
+    {
+      free(pvalue);
       continue;
-
+    }
+	  if (pvalue[2] > MIN_P_VALUE)
+    {
+      free(pvalue);
+      continue;
+    }
+    
 	  fprintf(output, "%d\t%d\t%.6f\t%.6f\t%.10f\n", i, j, pvalue[0], pvalue[1], pvalue[2]);
 	}
   }

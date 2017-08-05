@@ -98,7 +98,7 @@ int cuda_LU_solve(const double *A, const int m, double *B, const int nrhs)
   // check if LU is good or not
   cudaStat1 = cudaMemcpy(&info_gpu, devInfo, sizeof(int), cudaMemcpyDeviceToHost);
   assert(cudaSuccess == cudaStat1);
-  printf("after getrf: info_gpu = %d\n", info_gpu);
+  //printf("after getrf: info_gpu = %d\n", info_gpu);
   if (info_gpu < 0)
     printf("ERROR: the %d-th parameter is wrong.\n", abs(info_gpu));
   else if (info_gpu > 0)
