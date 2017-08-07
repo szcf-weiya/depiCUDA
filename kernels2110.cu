@@ -35,25 +35,25 @@ __global__ void ols_kernel(const double *d_GX,
                             const double *d_GY,
                             double *d_Gcoef,
                             double *d_Gtscore,
-                            const int N,
-                            double *d_X3,
-                            double *d_XX,
-                            double *d_invXX,
-                            double *d_coef,
-                            double *d_coef2
-                          )
+                            const int N)
 {
-  int id_i = threadIdx.x;
-  int id_j = blockIdx.x;
-  if (id_j <= id_i)
-    return;
-
+  int noOfBlocks = (N + blockDim.x - 1)/blockDim.x;
+  int id_i = blockIdx.x;
+  for (int id_ii = 0; id_ii < noOfBlocks; id_ii++)
+  //for(int id_i = blockIdx.x; id_i < N; id_i += gridDim.x)
+  {
+    int id_j = threadIdx.x;
+    if (id_j * id_ii < id_i)
+//    for (int id_j = threadIdx.x; id_j < N; id_j += blockDim.x)
+    {
+  //  if (id_j <= id_i)
+    //  return;
   //__syncthreads();
   //printf("i = %d; j = %d\n", id_i, id_j);
   const double *d_X1, *d_X2;
   //double *d_X1 = (double*)malloc(sizeof(double)*n);
   //double *d_X2 = (double*)malloc(sizeof(double)*n);
-  //double *d_X3 = (double*)malloc(sizeof(double)*n);
+  double *d_X3 = (double*)malloc(sizeof(double)*n);
 
   if (!d_X3)
   {
@@ -133,6 +133,7 @@ __global__ void ols_kernel(const double *d_GX,
     printf("dcopy failed\n");
     return;
   }
+  free(d_X3);
 
   // //////////////////
   //
@@ -150,6 +151,32 @@ __global__ void ols_kernel(const double *d_GX,
   if (!alpha)
     printf("error, alpha\n");
 
+  double *d_XX = (double *)malloc(sizeof(double)*p*p);
+  double *d_invXX = (double *)malloc(sizeof(double)*p*p);
+  double *d_coef2 = (double *)malloc(sizeof(double)*p);
+  double *d_coef = (double *)malloc(sizeof(double)*p);
+
+  if (!d_XX)
+  {
+    printf("ERROR: malloc failed!\n");
+    return;
+  }
+  if (!d_invXX)
+  {
+    printf("ERROR: malloc failed!\n");
+    return;
+  }
+  if (!d_coef)
+  {
+    printf("ERROR: malloc failed!\n");
+    return;
+  }
+  if (!d_coef2)
+  {
+    printf("ERROR: malloc failed!\n");
+    return;
+  }
+  __syncthreads();
 
   cublas_status = cublasDgemm(cublasH,
                            CUBLAS_OP_T, CUBLAS_OP_N,
@@ -302,7 +329,6 @@ __global__ void ols_kernel(const double *d_GX,
   }
   __syncthreads();
 
-  /*
   if (!psigma)
     printf("error, psigma\n");
   sigma = *psigma;
@@ -315,65 +341,65 @@ __global__ void ols_kernel(const double *d_GX,
   {
     tscore = d_coef[i]/(sigma*sqrt(d_invXX[i+p*i]));
     id = id_i*N+id_j-((id_i+1)*(id_i+2))/2;
-    //d_Gcoef[i+p*id] = d_coef[i];
-    //d_Gtscore[i+p*id] = tscore;
+    d_Gcoef[i+p*id] = d_coef[i];
+    d_Gtscore[i+p*id] = tscore;
   }
-  */
+
   //printf("%d, %d, finish tscore\n", id_i, id_j);
-  //printf("i = %d, j = %d; beta = %f, %f, %f, %f\n", id_i, id_j, d_coef[0], d_coef[1], d_coef[2], d_coef[3]);
+  printf("i = %d, j = %d; beta = %f, %f, %f, %f\n", id_i, id_j, d_coef[0], d_coef[1], d_coef[2], d_coef[3]);
   //printf("i = %d, j = %d; tscore = %f, %f, %f, %f\n", id_i, id_j, d_tscore[0], d_tscore[1], d_tscore[2], d_tscore[3]);
 
   //free(alpha);
   //free(beta);
 
+  if (d_coef2) free(d_coef2);
+  if (d_coef) free(d_coef);
+  //free(d_tscore);
+  if (d_invXX) free(d_invXX);
+  if (d_X) free(d_X);
   if (d_Y) free(d_Y);
-  free(pivotArray);
-  free(info);
+  free(pivotArray); // DO NOT free before
+  free(info); // DO NOT free before
+  free(d_XX);
   free(a);
   free(c); // DO NOT free before d_invXX
 
   cublasDestroy_v2(cublasH);
 }
+}
+}
 
 static void
 run_ols(const double *G, const double *Y, int n, int p, double *coef, double *tscore, int N)
 {
-  double *d_G, *d_Y, *d_Gcoef, *d_Gtscore, *d_X3, *d_XX, *d_invXX, *d_coef2, *d_coef;
+  double *d_G, *d_Y, *d_coef, *d_tscore;
 
   PERR(cudaMalloc(&d_G, n*N*sizeof(double)));
   PERR(cudaMalloc(&d_Y, n*sizeof(double)));
-  PERR(cudaMalloc(&d_Gcoef, N*(N-1)/2*p*sizeof(double)));
-  PERR(cudaMalloc(&d_Gtscore, N*(N-1)/2*p*sizeof(double)));
-  PERR(cudaMalloc(&d_XX, sizeof(double)*p*p));
-  PERR(cudaMalloc(&d_invXX, sizeof(double)*p*p));
-  PERR(cudaMalloc(&d_coef2, sizeof(double)*p));
-  PERR(cudaMalloc(&d_coef, sizeof(double)*p));
-  PERR(cudaMalloc(&d_X3, sizeof(double)*n));
-
+  PERR(cudaMalloc(&d_coef, N*(N-1)/2*p*sizeof(double)));
+  PERR(cudaMalloc(&d_tscore, N*(N-1)/2*p*sizeof(double)));
   PERR(cudaMemcpy(d_G, G, n*N*sizeof(double), cudaMemcpyHostToDevice));
   PERR(cudaMemcpy(d_Y, Y, n*sizeof(double), cudaMemcpyHostToDevice));
 
-  dim3 blocks(N, 1);
-  dim3 grids(N, 1);
+  int threadsPerBlock = N/2;
+  int blocksPerGird = N;
+  dim3 blocks(threadsPerBlock, 1);
+  dim3 grids(blocksPerGird, 1);
   //int blocks = N;
   //int grids = N;
   //dim3 blocks(16, 16);
   //dim3 grids((N+15)/16,(N+15)/16);
   //int numBlocks = (N+15)/16;
   //ols_kernel<<<1, 1>>>(d_X, n, p, d_Y, d_coef, d_tscore);
-  ols_kernel<<<grids, blocks>>>(d_G, n, p, d_Y, d_Gcoef, d_Gtscore, N, d_X3,d_XX, d_invXX, d_coef2, d_coef);
+  ols_kernel<<<grids, blocks>>>(d_G, n, p, d_Y, d_coef, d_tscore, N);
   cudaDeviceSynchronize();
   ERRCHECK;
 
-  PERR(cudaMemcpy(coef, d_Gcoef, N*(N-1)/2*p*sizeof(double), cudaMemcpyDeviceToHost));
-  PERR(cudaMemcpy(tscore, d_Gtscore, N*(N-1)/2*p*sizeof(double), cudaMemcpyDeviceToHost));
+  PERR(cudaMemcpy(coef, d_coef, N*(N-1)/2*p*sizeof(double), cudaMemcpyDeviceToHost));
+  PERR(cudaMemcpy(tscore, d_tscore, N*(N-1)/2*p*sizeof(double), cudaMemcpyDeviceToHost));
 
   PERR(cudaFree(d_G));
   PERR(cudaFree(d_Y));
-  PERR(cudaFree(d_XX));
-  PERR(cudaFree(d_invXX));
-  PERR(cudaFree(d_coef2));
-  PERR(cudaFree(d_coef));
 }
 
 int
@@ -393,6 +419,15 @@ main(int argc, char **argv)
   double *B = (double*)malloc(sizeof(double)*n);
   double *pvalue = (double*)malloc(sizeof(double)*(N*(N-1))/2*p);
   double *coef = (double*)malloc(sizeof(double)*(N*(N-1))/2*p);
+  if (!A)
+    printf("pvalue malloc error");
+  if (!B)
+    printf("pvalue malloc error");
+
+  if (!pvalue)
+    printf("pvalue malloc error");
+  if (!coef)
+    printf("coef malloc error");
 
   for (size_t i = 0; i < n; i++)
   {
