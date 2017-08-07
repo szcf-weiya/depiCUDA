@@ -26,26 +26,27 @@
   }
 
 
-__global__ void ols_kernel(const double *d_G,
+__global__ void ols_kernel(const double *d_GX,
                             const int n,
                             const int p,
-                            double *d_Y,
+                            const double *d_GY,
                             double *d_Gcoef,
                             double *d_Gtscore,
                             const int N)
 {
   int id_i = blockIdx.x;
   int id_j = threadIdx.x;
-  if (id_j <= id_x)
+  if (id_j <= id_i)
     return;
-
-  double *d_X1, *d_X2;
+  printf("i = %d; j = %d\n", id_i, id_j);
+  const double *d_X1, *d_X2;
   //double *d_X1 = (double*)malloc(sizeof(double)*n);
   //double *d_X2 = (double*)malloc(sizeof(double)*n);
   double *d_X3 = (double*)malloc(sizeof(double)*n);
-  d_X1 = d_G + id_i*n;
-  d_X2 = d_G + id_j*n;
+  double *d_Y = (double*)malloc(sizeof(double)*n);
 
+  d_X1 = d_GX + id_i*n;
+  d_X2 = d_GX + id_j*n;
   // create cublas handle
   cublasHandle_t cublasH = NULL;
   cublasStatus_t cublas_status = cublasCreate_v2(&cublasH);
@@ -63,9 +64,15 @@ __global__ void ols_kernel(const double *d_G,
                           d_X3, n);
   __syncthreads();
 
-  double one = 1.0;
-  double *pone = &one;
+  // copy to d_Y
+  cublasDcopy(cublasH, n,
+                           d_GY, 1,
+                           d_Y, 1);
+  __syncthreads();
+  printf("i = %d; j = %d\n", id_i, id_j);
 
+  double *pone = (double*)malloc(sizeof(double));
+  *pone = 1.0;
   // construct matrix X
   double *d_X = (double*)malloc(sizeof(double) * n * p);
   cublasDcopy(cublasH, n,
@@ -131,11 +138,9 @@ __global__ void ols_kernel(const double *d_G,
   *c = d_invXX;
   cublas_status = cublasDgetrfBatched(cublasH, p, a, p, pivotArray, info, batch);
   __syncthreads();
-  printf("rf %d info %d\n", cublas_status, info[0]);
   cublas_status = cublasDgetriBatched(cublasH, p, aconst, p, pivotArray,
       c, p, info, batch);
   __syncthreads();
-  printf("ri %d info %d\n", cublas_status, info[0]);
 
   // /////////////////////
   //
@@ -150,7 +155,7 @@ __global__ void ols_kernel(const double *d_G,
                            beta,
                            d_coef2, 1);
   __syncthreads();
-
+  printf("%d, %d, finish X'Y\n", id_i, id_j);
   // /////////////////////
   //
   // (X'X)^{-1}X'Y
@@ -165,7 +170,7 @@ __global__ void ols_kernel(const double *d_G,
                            d_coef, 1);
 
   __syncthreads();
-
+  printf("%d, %d, finish beta\n", id_i, id_j);
   // ///////////////////
   // rss
   // ///////////////////
@@ -179,33 +184,37 @@ __global__ void ols_kernel(const double *d_G,
                            beta,
                            d_Y, 1);
   __syncthreads();
-
+  printf("%d, %d, finish rss\n", id_i, id_j);
   // sigma ^2 = RSS/(n-p-1)
   double sigma;
-  printf("%f\n", norm(n, d_Y));
   //sigma = norm(n, d_Y);
-  double *psigma = &sigma;
-  cublasDnrm2(cublasH, n, d_Y, 1, psigma);
+  double *psigma = (double*)malloc(sizeof(double));
+  //psigma = &sigma;
+
+  cublas_status = cublasDnrm2(cublasH, n, d_Y, 1, psigma);
+  __syncthreads();
+  sigma = *psigma;
+  free(psigma);
   //printf("%f\n", sigma);
   sigma = sigma/sqrt((n-p)*1.0);
+  printf("%f; %f; %f; %f\n", d_coef[0], d_coef[1], d_coef[2], d_coef[3]);
+  int id;
   for (int i = 0; i < p; i++)
   {
     d_tscore[i] = d_coef[i]/(sigma*sqrt(d_invXX[i+p*i]));
-    d_Gcoef[i+id_i*N+id_j-(id_i+1)*(id_i+2)/2] = d_coef[i];
-    d_Gtscore[i+id_i*N+id_j-(id_i+1)*(id_i+2)/2] = d_tscore[i];
+    id = id_i*N+id_j-((id_i+1)*(id_i+2))/2;
+    d_Gcoef[i+p*id] = d_coef[i];
+    d_Gtscore[i+p*id] = d_tscore[i];
   }
-
-  printf("%f\n", d_invXX[0]);
-  printf("%f\n", d_invXX[1]);
-  printf("%f\n", d_invXX[2]);
-  printf("%f\n", d_invXX[3]);
-
+  printf("%d, %d, finish tscore\n", id_i, id_j);
+  free(pone);
   free(d_coef2);
   free(d_coef);
   free(d_tscore);
   free(d_invXX);
   free(d_XX);
   free(d_X);
+  free(d_Y);
   //free(d_Yhat);
   free(a);
   free(c);
@@ -231,8 +240,7 @@ run_ols(const double *G, const double *Y, int n, int p, double *coef, double *ts
   dim3 grids(N, 1);
 
   //ols_kernel<<<1, 1>>>(d_X, n, p, d_Y, d_coef, d_tscore);
-  ols_kernel<<<grids, blocks>>>(d_X, n, p, d_Y, d_coef, d_tscore, N);
-
+  ols_kernel<<<grids, blocks>>>(d_G, n, p, d_Y, d_coef, d_tscore, N);
   cudaDeviceSynchronize();
   ERRCHECK;
 
@@ -248,12 +256,26 @@ main(int argc, char **argv)
 {
   double A[] = {1, 3, 4, 5, 2, 3, 5, 4, 3, 6, 7, 9};
   double B[] = {1, 2, 3, 4};
-  double coef[2];
-  double pvalue[2];
+  double coef[4*3];
+  double pvalue[4*3];
 
   run_ols(A, B, 4, 4, coef, pvalue);
 
   printf("beta0 = %f; pvalue = %f\n", coef[0], pvalue[0]);
   printf("beta1 = %f; pvalue = %f\n", coef[1], pvalue[1]);
+  printf("beta2 = %f; pvalue = %f\n", coef[2], pvalue[2]);
+  printf("beta3 = %f; pvalue = %f\n", coef[3], pvalue[3]);
+
+  printf("beta0 = %f; pvalue = %f\n", coef[4], pvalue[4]);
+  printf("beta1 = %f; pvalue = %f\n", coef[5], pvalue[5]);
+  printf("beta2 = %f; pvalue = %f\n", coef[6], pvalue[6]);
+  printf("beta3 = %f; pvalue = %f\n", coef[7], pvalue[7]);
+
+  printf("beta0 = %f; pvalue = %f\n", coef[8], pvalue[8]);
+  printf("beta1 = %f; pvalue = %f\n", coef[9], pvalue[9]);
+  printf("beta2 = %f; pvalue = %f\n", coef[10], pvalue[10]);
+  printf("beta3 = %f; pvalue = %f\n", coef[11], pvalue[11]);
+
+
   return 0;
 }
