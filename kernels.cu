@@ -26,13 +26,26 @@
   }
 
 
-__global__ void ols_kernel(const double *d_X,
+__global__ void ols_kernel(const double *d_G,
                             const int n,
                             const int p,
                             double *d_Y,
-                            double *d_coef,
-                            double *d_tscore)
+                            double *d_Gcoef,
+                            double *d_Gtscore,
+                            const int N)
 {
+  int id_i = blockIdx.x;
+  int id_j = threadIdx.x;
+  if (id_j <= id_x)
+    return;
+
+  double *d_X1, *d_X2;
+  //double *d_X1 = (double*)malloc(sizeof(double)*n);
+  //double *d_X2 = (double*)malloc(sizeof(double)*n);
+  double *d_X3 = (double*)malloc(sizeof(double)*n);
+  d_X1 = d_G + id_i*n;
+  d_X2 = d_G + id_j*n;
+
   // create cublas handle
   cublasHandle_t cublasH = NULL;
   cublasStatus_t cublas_status = cublasCreate_v2(&cublasH);
@@ -40,6 +53,39 @@ __global__ void ols_kernel(const double *d_X,
   {
     return;
   }
+
+  // elements-by-elements
+  // x3 = x1.*x2
+  cublas_status = cublasDdgmm(cublasH, CUBLAS_SIDE_LEFT,
+                          n, 1,
+                          d_X1, n,
+                          d_X2, 1,
+                          d_X3, n);
+  __syncthreads();
+
+  double one = 1.0;
+  double *pone = &one;
+
+  // construct matrix X
+  double *d_X = (double*)malloc(sizeof(double) * n * p);
+  cublasDcopy(cublasH, n,
+                           pone, 0,
+                           d_X, 1);
+  __syncthreads();
+  cublasDcopy(cublasH, n,
+                           d_X1, 1,
+                           d_X+n, 1);
+  __syncthreads();
+  cublasDcopy(cublasH, n,
+                           d_X2, 1,
+                           d_X+2*n, 1);
+  __syncthreads();
+  cublasDcopy(cublasH, n,
+                           d_X3, 1,
+                           d_X+3*n, 1);
+  __syncthreads();
+  free(d_X3);
+
   // //////////////////
   //
   // X'X
@@ -51,6 +97,8 @@ __global__ void ols_kernel(const double *d_X,
   double *d_XX = (double *)malloc(sizeof(double)*p*p);
   double *d_invXX = (double *)malloc(sizeof(double)*p*p);
   double *d_coef2 = (double *)malloc(sizeof(double)*p);
+  double *d_coef = (double *)malloc(sizeof(double)*p);
+  double *d_tscore = (double *)malloc(sizeof(double)*p);
   //double *d_Yhat = (double *)malloc(sizeof(double)*n);
 
   cublas_status = cublasDgemm(cublasH,
@@ -134,21 +182,30 @@ __global__ void ols_kernel(const double *d_X,
 
   // sigma ^2 = RSS/(n-p-1)
   double sigma;
+  printf("%f\n", norm(n, d_Y));
+  //sigma = norm(n, d_Y);
   double *psigma = &sigma;
   cublasDnrm2(cublasH, n, d_Y, 1, psigma);
-  //sigma = norm(n, d_Y);
-  printf("%f\n", sigma);
+  //printf("%f\n", sigma);
   sigma = sigma/sqrt((n-p)*1.0);
   for (int i = 0; i < p; i++)
+  {
     d_tscore[i] = d_coef[i]/(sigma*sqrt(d_invXX[i+p*i]));
+    d_Gcoef[i+id_i*N+id_j-(id_i+1)*(id_i+2)/2] = d_coef[i];
+    d_Gtscore[i+id_i*N+id_j-(id_i+1)*(id_i+2)/2] = d_tscore[i];
+  }
+
   printf("%f\n", d_invXX[0]);
   printf("%f\n", d_invXX[1]);
   printf("%f\n", d_invXX[2]);
   printf("%f\n", d_invXX[3]);
 
   free(d_coef2);
+  free(d_coef);
+  free(d_tscore);
   free(d_invXX);
   free(d_XX);
+  free(d_X);
   //free(d_Yhat);
   free(a);
   free(c);
@@ -156,38 +213,45 @@ __global__ void ols_kernel(const double *d_X,
 }
 
 static void
-run_ols(const double *X, const double *Y, int n, int p, double *coef, double *tscore)
+run_ols(const double *G, const double *Y, int n, int p, double *coef, double *tscore)
 {
-  double *d_X, *d_Y, *d_coef, *d_tscore;
+  double *d_G, *d_Y, *d_coef, *d_tscore;
 
-  PERR(cudaMalloc(&d_X, n*p*sizeof(double)));
+  int N = 3;
+
+  PERR(cudaMalloc(&d_G, n*N*sizeof(double)));
   PERR(cudaMalloc(&d_Y, n*sizeof(double)));
-  PERR(cudaMalloc(&d_coef, p*sizeof(double)));
-  PERR(cudaMalloc(&d_tscore, p*sizeof(double)));
-  PERR(cudaMemcpy(d_X, X, n*p*sizeof(double), cudaMemcpyHostToDevice));
+  PERR(cudaMalloc(&d_coef, N*(N-1)/2*p*sizeof(double)));
+  PERR(cudaMalloc(&d_tscore, N*(N-1)/2*p*sizeof(double)));
+  PERR(cudaMemcpy(d_G, G, n*N*sizeof(double), cudaMemcpyHostToDevice));
   PERR(cudaMemcpy(d_Y, Y, n*sizeof(double), cudaMemcpyHostToDevice));
 
-  ols_kernel<<<1, 1>>>(d_X, n, p, d_Y, d_coef, d_tscore);
+
+  dim3 blocks(N, 1);
+  dim3 grids(N, 1);
+
+  //ols_kernel<<<1, 1>>>(d_X, n, p, d_Y, d_coef, d_tscore);
+  ols_kernel<<<grids, blocks>>>(d_X, n, p, d_Y, d_coef, d_tscore, N);
 
   cudaDeviceSynchronize();
   ERRCHECK;
 
-  PERR(cudaMemcpy(coef, d_coef, p*sizeof(double), cudaMemcpyDeviceToHost));
-  PERR(cudaMemcpy(tscore, d_tscore, p*sizeof(double), cudaMemcpyDeviceToHost));
+  PERR(cudaMemcpy(coef, d_coef, N*(N-1)/2*p*sizeof(double), cudaMemcpyDeviceToHost));
+  PERR(cudaMemcpy(tscore, d_tscore, N*(N-1)/2*p*sizeof(double), cudaMemcpyDeviceToHost));
 
-  PERR(cudaFree(d_X));
+  PERR(cudaFree(d_G));
   PERR(cudaFree(d_Y));
 }
 
 int
 main(int argc, char **argv)
 {
-  double A[] = {1, 1, 1, 1, 2, 3, 5, 4};
+  double A[] = {1, 3, 4, 5, 2, 3, 5, 4, 3, 6, 7, 9};
   double B[] = {1, 2, 3, 4};
   double coef[2];
   double pvalue[2];
 
-  run_ols(A, B, 4, 2, coef, pvalue);
+  run_ols(A, B, 4, 4, coef, pvalue);
 
   printf("beta0 = %f; pvalue = %f\n", coef[0], pvalue[0]);
   printf("beta1 = %f; pvalue = %f\n", coef[1], pvalue[1]);
