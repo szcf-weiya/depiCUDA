@@ -38,38 +38,59 @@ __global__ void ols_kernel(const double *d_GX,
                             const int N)
 {
   int id_i = blockIdx.x;
-  //printf("i = %d, j = %d\n", blockIdx.x, blockIdx.x*blockDim.x+threadIdx.x);
-  //  printf("i = %d\n", id_i);
   int noOfBlocks = (id_i + blockDim.x - 1)/blockDim.x;
   int id_j;
-  for (int id_ii = 0; id_ii <= noOfBlocks; id_ii++)
+
+  // create cublas handle
+  cublasHandle_t cublasH = NULL;
+  cublasStatus_t cublas_status = cublasCreate_v2(&cublasH);
+
+  const double *d_X1, *d_X2;
+  double *d_X3 = (double*)malloc(sizeof(double)*n);
+
+  int *pivotArray = (int *)malloc(p*sizeof(int));
+  int *info = (int *)malloc(sizeof(int));
+  int batch;
+  double *pone = (double*)malloc(sizeof(double));
+  *pone = 1.0;
+  // just one matrix
+  info[0] = 0;
+  batch = 1;
+
+  double *d_X = (double*)malloc(sizeof(double) * n * p);
+  double *d_Y = (double*)malloc(sizeof(double)*n);
+
+  double *d_XX = (double *)malloc(sizeof(double)*p*p);
+  double *d_invXX = (double *)malloc(sizeof(double)*p*p);
+  double *d_coef2 = (double *)malloc(sizeof(double)*p);
+  double *d_coef = (double *)malloc(sizeof(double)*p);
+
+  double sigma;
+  double *psigma = (double*)malloc(sizeof(double));
+  int id;
+  double tscore;
+
+  double alpha_v = 1.0;
+  double beta_v = 0.0;
+  double *alpha = &alpha_v, *beta = &beta_v;
+
+  double **a = (double **)malloc(sizeof(double *));
+  *a = d_XX;
+  const double **aconst = (const double **)a;
+
+  double **c = (double **)malloc(sizeof(double *));
+  *c = d_invXX;
+
+
+  __syncthreads();
+  for (int id_ii = 0; id_ii < noOfBlocks; id_ii++)
   {
     id_j = threadIdx.x + id_ii*blockDim.x;
-  //  printf("j = %d\n", id_j);
-
-//    for (int id_j = threadIdx.x; id_j < N; id_j += blockDim.x)
-//if (id_ii*threadIdx.x < id_i)
+    if (id_ii*threadIdx.x < id_i)
     {
-      printf("%d, %d\n", id_i, id_j);
-      __syncthreads();
-    //  if (id_j <= id_i)
-      //  return;
-    //__syncthreads();
-    //printf("i = %d; j = %d\n", id_i, id_j);
-
-    const double *d_X1, *d_X2;
-    double *d_X3 = (double*)malloc(sizeof(double)*n);
-
     d_X1 = d_GX + id_i*n;
     d_X2 = d_GX + id_j*n;
-    // create cublas handle
-    cublasHandle_t cublasH = NULL;
-    cublasStatus_t cublas_status = cublasCreate_v2(&cublasH);
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("ERROR: create handle failed!\n");
-      //return;
-    }
+    __syncthreads();
 
     // elements-by-elements
     // x3 = x1.*x2
@@ -79,105 +100,41 @@ __global__ void ols_kernel(const double *d_GX,
                             d_X2, 1,
                             d_X3, n);
     __syncthreads();
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dgemm failed\n");
-      //return;
-    }
 
     // copy to d_Y
-    double *d_Y = (double*)malloc(sizeof(double)*n);
     cublas_status = cublasDcopy(cublasH, n,
                              d_GY, 1,
                              d_Y, 1);
     __syncthreads();
 
-    double *pone = (double*)malloc(sizeof(double));
-    *pone = 1.0;
+
     // construct matrix X
-    double *d_X = (double*)malloc(sizeof(double) * n * p);
     cublas_status = cublasDcopy(cublasH, n,
                              pone, 0,
                              d_X, 1);
     __syncthreads();
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dcopy failed\n");
-      //return;
-    }
-    free(pone);
+
     cublas_status = cublasDcopy(cublasH, n,
                              d_X1, 1,
                              d_X+n, 1);
     __syncthreads();
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dcopy failed\n");
-      //return;
-    }
+
     cublas_status = cublasDcopy(cublasH, n,
                              d_X2, 1,
                              d_X+2*n, 1);
     __syncthreads();
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dcopy failed\n");
-      //return;
-    }
+
     cublas_status = cublasDcopy(cublasH, n,
                              d_X3, 1,
                              d_X+3*n, 1);
     __syncthreads();
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dcopy failed\n");
-      //return;
-    }
-    free(d_X3);
+
 
     // //////////////////
     //
     // X'X
     //
     // /////////////////
-
-    //double *alpha = (double*)malloc(sizeof(double));
-    //double *beta = (double*)malloc(sizeof(double));
-    double alpha_v = 1.0;
-    double beta_v = 0.0;
-    double *alpha = &alpha_v, *beta = &beta_v;
-    if (!beta)
-      printf("error, bata\n");
-    if (!alpha)
-      printf("error, alpha\n");
-
-    double *d_XX = (double *)malloc(sizeof(double)*p*p);
-    double *d_invXX = (double *)malloc(sizeof(double)*p*p);
-    double *d_coef2 = (double *)malloc(sizeof(double)*p);
-    double *d_coef = (double *)malloc(sizeof(double)*p);
-
-    if (!*d_XX)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    if (!d_invXX)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    if (!d_coef)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    if (!d_coef2)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    __syncthreads();
-
     cublas_status = cublasDgemm(cublasH,
                              CUBLAS_OP_T, CUBLAS_OP_N,
                              p, p, n, // DO NOT mess up the order
@@ -187,50 +144,12 @@ __global__ void ols_kernel(const double *d_GX,
                              beta,
                              d_XX, p);
     __syncthreads();
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dgemm failed\n");
-      //return;
-    }
     // /////////////////////
     //
     // inv(X'X)
     //
     // ////////////////////
-    int *pivotArray = (int *)malloc(p*sizeof(int));
-    int *info = (int *)malloc(sizeof(int));
-    int batch;
-    if (!pivotArray)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    if (!info)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    // just one matrix
-    info[0] = 0;
-    batch = 1;
 
-    double **a = (double **)malloc(sizeof(double *));
-    if (!a)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    *a = d_XX;
-    const double **aconst = (const double **)a;
-    if (!aconst)
-      printf("acconst error\n");
-    double **c = (double **)malloc(sizeof(double *));
-    if (!c)
-    {
-      printf("ERROR: malloc failed!\n");
-      //return;
-    }
-    *c = d_invXX;
     cublas_status = cublasDgetrfBatched(cublasH, p, a, p, pivotArray, info, batch);
     __syncthreads();
     if (info[0] < 0)
@@ -268,11 +187,6 @@ __global__ void ols_kernel(const double *d_GX,
                              d_Y, 1,
                              beta,
                              d_coef2, 1);
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dgemv failed\n");
-      //return;
-    }
     __syncthreads();
     //printf("%d, %d, finish X'Y\n", id_i, id_j);
     // /////////////////////
@@ -287,21 +201,12 @@ __global__ void ols_kernel(const double *d_GX,
                              d_coef2, 1,
                              beta,
                              d_coef, 1);
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dgemv failed\n");
-      //return;
-    }
     __syncthreads();
     //printf("%d, %d, finish beta\n", id_i, id_j);
     // ///////////////////
     // rss
     // ///////////////////
-    if (!beta)
-      printf("error, bata\n");
-    beta[0] = -1.0;
-    if (!beta)
-      printf("error, bata\n");
+    *beta = -1.0;
     cublas_status = cublasDgemv(cublasH, CUBLAS_OP_N,
                              n, p,
                              alpha,
@@ -309,36 +214,17 @@ __global__ void ols_kernel(const double *d_GX,
                              d_coef, 1,
                              beta,
                              d_Y, 1);
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dgemv failed\n");
-      //return;
-    }
     __syncthreads();
     //printf("%d, %d, finish rss\n", id_i, id_j);
     // sigma ^2 = RSS/(n-p-1)
-    double sigma;
-    //sigma = norm(n, d_Y);
-    double *psigma = (double*)malloc(sizeof(double));
     //psigma = &sigma;
-    if (!psigma)
-      printf("error, psigma\n");
     cublas_status = cublasDnrm2(cublasH, n, d_Y, 1, psigma);
-    if (cublas_status != CUBLAS_STATUS_SUCCESS)
-    {
-      printf("dnrm2 failed\n");
-      //return;
-    }
     __syncthreads();
-
-    if (!psigma)
-      printf("error, psigma\n");
     sigma = *psigma;
-    free(psigma);
+
     //printf("%f\n", sigma);
     sigma = sigma/sqrt((n-p)*1.0);
-    int id;
-    double tscore;
+    __syncthreads();
     for (int i = 0; i < p; i++)
     {
       tscore = d_coef[i]/(sigma*sqrt(d_invXX[i+p*i]));
@@ -350,26 +236,22 @@ __global__ void ols_kernel(const double *d_GX,
     //printf("%d, %d, finish tscore\n", id_i, id_j);
     printf("i = %d, j = %d; beta = %f, %f, %f, %f\n", id_i, id_j, d_coef[0], d_coef[1], d_coef[2], d_coef[3]);
     //printf("i = %d, j = %d; tscore = %f, %f, %f, %f\n", id_i, id_j, d_tscore[0], d_tscore[1], d_tscore[2], d_tscore[3]);
-
-    //free(alpha);
-    //free(beta);
-
-    if (d_coef2) free(d_coef2);
-    if (d_coef) free(d_coef);
-    //free(d_tscore);
-    if (d_invXX) free(d_invXX);
-    if (d_X) free(d_X);
-    if (d_Y) free(d_Y);
-    free(pivotArray); // DO NOT free before
-    free(info); // DO NOT free before
-    free(d_XX);
-    free(a);
-    free(c); // DO NOT free before d_invXX
-
-    cublasDestroy_v2(cublasH);
-
+    }
   }
-  }
+  free(pone);
+  free(d_coef2);
+  free(d_coef);
+  free(d_invXX);
+  free(d_X);
+  free(d_Y);
+  free(pivotArray); // DO NOT free before
+  free(info); // DO NOT free before
+  free(d_XX);
+  free(a);
+  free(psigma);
+  free(c); // DO NOT free before d_invXX
+  free(d_X3);
+  cublasDestroy_v2(cublasH);
 }
 
 static void
@@ -388,8 +270,8 @@ run_ols(const double *G, const double *Y, int n, int p, double *coef, double *ts
   int blocksPerGird = N;
   int blocks = threadsPerBlock;
   int grids = N;
-  dim3 blocks(threadsPerBlock, 1);
-  dim3 grids(blocksPerGird, 1);
+//  dim3 blocks(threadsPerBlock, 1);
+//  dim3 grids(blocksPerGird, 1);
   //int blocks = N;
   //int grids = N;
   //dim3 blocks(16, 16);
