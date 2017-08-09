@@ -106,7 +106,7 @@ int main(int argc, char const *argv[]) {
   cudaMalloc((void**)&d_coef, sizeof(double)*3);
   cudaMemcpy(d_A, A, sizeof(double)*12, cudaMemcpyHostToDevice);
   cudaMemcpy(d_B, B, sizeof(double)*4, cudaMemcpyHostToDevice);
-  solveBeta<<<10, 10>>>(4, 3, d_A, d_B, d_invXX, d_coef);
+  solveBeta<<<1, 1>>>(4, 3, d_A, d_B, d_invXX, d_coef);
   cudaDeviceSynchronize();
   cudaMemcpy(coef, d_coef, sizeof(double)*3, cudaMemcpyDeviceToHost);
   for (int i = 0; i < 3; i++)

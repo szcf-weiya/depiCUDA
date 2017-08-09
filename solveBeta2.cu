@@ -82,7 +82,7 @@ __device__ int solveBeta(
                            &beta,
                            d_coef, 1);
   free(pivotArray);
-  //free(info);
+  free(info);
   free(d_XX);
   free(d_coef2);
   free(a);
@@ -94,16 +94,30 @@ __device__ int solveBeta(
 __global__ void kernel(int n, int p,
   const double *d_X,
   const double *d_Y,
-  double *d_invXX,
-  double *d_coef)
+  double *d_GinvXX,
+  double *d_Gcoef)
 {
+  int tid = threadIdx.x + blockIdx.x*blockDim.x;
+  //printf("%d\n", tid);
+  double *d_coef = (double*)malloc(sizeof(double)*p);
+  double *d_invXX = (double*)malloc(sizeof(double)*p*p);
+  __syncthreads(); // must add
+  solveBeta(n, p, d_X, d_Y, d_invXX, d_coef);
+  __syncthreads(); // must add
+  /*
+  if (res != 0)
+  {
+    free(d_coef);
+    free(d_invXX);
+    return;
+  }
+  */
+  __syncthreads(); // must add
+  for (int i = 0; i < p; i++)
+    d_Gcoef[tid*p+i] = d_coef[i];
   __syncthreads();
-  solveBeta(int n, int p,
-                            const double *d_X,
-                            const double *d_Y,
-                            double *d_invXX,
-                            double *d_coef);
-  __syncthreads();
+  free(d_coef);
+  free(d_invXX);
 }
 
 int main(int argc, char const *argv[]) {
@@ -112,19 +126,31 @@ int main(int argc, char const *argv[]) {
   double A[] = {1, 1, 1, 1, 2, 3, 5, 4, 3, 6, 7, 9};
   double B[] = {1, 2, 3, 4};
   double *d_A, *d_B, *d_invXX, *d_coef;
-  double coef[3];
+  int threadsPerBlock = 256;
+  int blocksPerGird = 1;
+  double coef[3*threadsPerBlock*blocksPerGird];
   cudaMalloc((void**)&d_A, sizeof(double)*12);
   cudaMalloc((void**)&d_B, sizeof(double)*4);
   cudaMalloc((void**)&d_invXX, sizeof(double)*9);
-  cudaMalloc((void**)&d_coef, sizeof(double)*3);
+  cudaMalloc((void**)&d_coef, sizeof(double)*3*threadsPerBlock*blocksPerGird);
   cudaMemcpy(d_A, A, sizeof(double)*12, cudaMemcpyHostToDevice);
   cudaMemcpy(d_B, B, sizeof(double)*4, cudaMemcpyHostToDevice);
-  solveBeta<<<4, 4>>>(4, 3, d_A, d_B, d_invXX, d_coef);
+  kernel<<<threadsPerBlock, blocksPerGird>>>(4, 3, d_A, d_B, d_invXX, d_coef);
   cudaDeviceSynchronize();
-  cudaMemcpy(coef, d_coef, sizeof(double)*3, cudaMemcpyDeviceToHost);
-  for (int i = 0; i < 3; i++)
+  cudaMemcpy(coef, d_coef, sizeof(double)*3*threadsPerBlock*blocksPerGird, cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
+
+  cudaFree(d_coef);
+  cudaFree(d_invXX);
+  cudaFree(d_A);
+  cudaFree(d_B);
+  cudaDeviceReset();
+
+  for (int i = 0; i < threadsPerBlock*blocksPerGird; i++)
   {
-    printf("%f, \n", coef[i]);
+    for (int j = 0; j < 3; j++)
+      printf("%f, \n", coef[i*3+j]);
+    printf("\n");
   }
   return 0;
 }
