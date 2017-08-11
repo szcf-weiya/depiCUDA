@@ -126,8 +126,8 @@ int main(int argc, char const *argv[]) {
   double A[] = {1, 1, 1, 1, 2, 3, 5, 4, 3, 6, 7, 9};
   double B[] = {1, 2, 3, 4};
   double *d_A, *d_B, *d_invXX, *d_coef;
-  int threadsPerBlock = 256;
-  int blocksPerGird = 1;
+  int threadsPerBlock = 32;
+  int blocksPerGird = 2;
   double coef[3*threadsPerBlock*blocksPerGird];
   cudaMalloc((void**)&d_A, sizeof(double)*12);
   cudaMalloc((void**)&d_B, sizeof(double)*4);
