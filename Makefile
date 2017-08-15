@@ -9,7 +9,7 @@ source = pureDetectEpi.cpp
 
 all:\
 	out2 \
-	out 
+	out
 
 
 cuLUsolve.o: cuLUsolve.h cuLUsolve.cu
@@ -33,3 +33,6 @@ mpout2: cuLUsolve.o cuMultifit.o cudaDetectEpi.o
 
 out2: cuLUsolve.o cuMultifit.o cudaDetectEpi.o
 	nvcc $^ -o $@ $(CUDAFLAGS) $(GSLFLAG)
+
+solveBeta:
+	nvcc -o ols2 solveBeta2.cu -lcublas_device -lcudadevrt -arch=sm_35 -rdc=true -lgsl -lgslcblas -g

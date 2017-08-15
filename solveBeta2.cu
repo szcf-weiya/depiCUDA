@@ -10,7 +10,7 @@
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_matrix.h>
 
-__device__ int solveBeta(
+__device__ inline int solveBeta(int tid,
                           int n, int p,
                           const double *d_X,
                           const double *d_Y,
@@ -24,10 +24,15 @@ __device__ int solveBeta(
   info[0] = 0;
   //int info;
   int batch = 1;
-  double alpha = 1.0, beta = 0.0;
+  double alpha = 1, beta = 0;
+  const double *palpha = &alpha, *pbeta = &beta;
 
   double *d_XX = (double *)malloc(sizeof(double)*p*p);
   double *d_coef2 = (double *)malloc(sizeof(double)*p);
+  memset(d_coef2, 0.0, sizeof(double)*p);
+  memset(d_coef, 0.0, sizeof(double)*p);
+  memset(d_XX, 0.0, sizeof(double)*p*p);
+
 
   double **a = (double **)malloc(sizeof(double *));
   *a = d_XX;
@@ -39,10 +44,10 @@ __device__ int solveBeta(
   cublas_status = cublasDgemm(cublasH,
                            CUBLAS_OP_T, CUBLAS_OP_N,
                            p, p, n, // DO NOT mess up the order
-                           &alpha,
+                           palpha,
                            d_X, n,
                            d_X, n,
-                           &beta,
+                           pbeta,
                            d_XX, p);
 
   // inv(X'X)
@@ -63,24 +68,29 @@ __device__ int solveBeta(
     cublasDestroy_v2(cublasH);
     return info[0];
   }
-
   // X'Y   (p*n)*(n*1) = p*1
   cublas_status = cublasDgemv(cublasH, CUBLAS_OP_T,
                            n, p,
-                           &alpha,
+                           palpha,
                            d_X, n,
                            d_Y, 1,
-                           &beta,
+                           pbeta,
                            d_coef2, 1);
+  __syncthreads();
+  printf("tid = %d; inv = %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f\n", tid, d_invXX[0], d_invXX[1], d_invXX[2], d_invXX[5], d_invXX[4], d_invXX[8], d_coef2[0], d_coef2[1], d_coef2[2]);
 
   // (X'X)^{-1}X'Y
-  cublas_status = cublasDgemv(cublasH, CUBLAS_OP_T,
+  cublas_status = cublasDgemv(cublasH, CUBLAS_OP_N,
                            p, p,
-                           &alpha,
+                           palpha,
                            d_invXX, p,
                            d_coef2, 1,
-                           &beta,
+                           pbeta,
                            d_coef, 1);
+  //printf("tid = %d; inv = %f, %f, %f; beta = %f, %f, %f\n", tid, d_invXX[0], d_invXX[4], d_invXX[8], d_coef[0], d_coef[1], d_coef[2]);
+  //printf("tid = %d; inv = %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f\n", tid, d_invXX[0], d_invXX[1], d_invXX[2], d_invXX[5], d_invXX[4], d_invXX[8], d_coef[0], d_coef[1], d_coef[2]);
+//  printf("tid = %d; inv = %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f\n", tid, d_invXX[0], d_invXX[1], d_invXX[2], d_invXX[5], d_invXX[4], d_invXX[8], d_coef2[0], d_coef2[1], d_coef2[2]);
+
   free(pivotArray);
   free(info);
   free(d_XX);
@@ -101,9 +111,9 @@ __global__ void kernel(int n, int p,
   //printf("%d\n", tid);
   double *d_coef = (double*)malloc(sizeof(double)*p);
   double *d_invXX = (double*)malloc(sizeof(double)*p*p);
-  __syncthreads(); // must add
-  solveBeta(n, p, d_X, d_Y, d_invXX, d_coef);
-  __syncthreads(); // must add
+  //__syncthreads(); // must add
+  solveBeta(tid, n, p, d_X, d_Y, d_invXX, d_coef);
+  //__syncthreads(); // must add
   /*
   if (res != 0)
   {
@@ -112,10 +122,14 @@ __global__ void kernel(int n, int p,
     return;
   }
   */
-  __syncthreads(); // must add
+  //__syncthreads(); // must add
+  #pragma unroll
   for (int i = 0; i < p; i++)
+  {
     d_Gcoef[tid*p+i] = d_coef[i];
-  __syncthreads();
+  }
+  //printf("tid = %d; inv = %f, %f, %f; beta = %f, %f, %f\n", tid, d_invXX[0], d_invXX[4], d_invXX[8], d_coef[0], d_coef[1], d_coef[2]);
+  //__syncthreads();
   free(d_coef);
   free(d_invXX);
 }
@@ -127,7 +141,10 @@ int main(int argc, char const *argv[]) {
   double B[] = {1, 2, 3, 4};
   double *d_A, *d_B, *d_invXX, *d_coef;
   int threadsPerBlock = 32;
-  int blocksPerGird = 2;
+  int blocksPerGird = 1;
+  // Set a heap size of 128 megabytes. Note that this must
+  // be done before any kernel is launched.
+  cudaThreadSetLimit(cudaLimitMallocHeapSize, 1024*1024*1024);
   double coef[3*threadsPerBlock*blocksPerGird];
   cudaMalloc((void**)&d_A, sizeof(double)*12);
   cudaMalloc((void**)&d_B, sizeof(double)*4);
@@ -138,19 +155,19 @@ int main(int argc, char const *argv[]) {
   kernel<<<threadsPerBlock, blocksPerGird>>>(4, 3, d_A, d_B, d_invXX, d_coef);
   cudaDeviceSynchronize();
   cudaMemcpy(coef, d_coef, sizeof(double)*3*threadsPerBlock*blocksPerGird, cudaMemcpyDeviceToHost);
-  cudaDeviceSynchronize();
 
   cudaFree(d_coef);
   cudaFree(d_invXX);
   cudaFree(d_A);
   cudaFree(d_B);
   cudaDeviceReset();
-
+/*
   for (int i = 0; i < threadsPerBlock*blocksPerGird; i++)
   {
     for (int j = 0; j < 3; j++)
       printf("%f, \n", coef[i*3+j]);
     printf("\n");
   }
+  */
   return 0;
 }
