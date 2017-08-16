@@ -38,7 +38,7 @@ __global__ void ols_kernel(const double *d_GX,
                             const int N)
 {
   int id_i = blockIdx.x;
-  int noOfBlocks = (id_i + blockDim.x - 1)/blockDim.x;
+  int noOfBlocks = (N + blockDim.x - 1)/blockDim.x;
   int id_j;
 
   // create cublas handle
@@ -86,7 +86,7 @@ __global__ void ols_kernel(const double *d_GX,
   for (int id_ii = 0; id_ii < noOfBlocks; id_ii++)
   {
     id_j = threadIdx.x + id_ii*blockDim.x;
-    if (id_ii*threadIdx.x < id_i)
+    if (id_j > id_i && id_j < N)
     {
     d_X1 = d_GX + id_i*n;
     d_X2 = d_GX + id_j*n;
@@ -268,8 +268,6 @@ run_ols(const double *G, const double *Y, int n, int p, double *coef, double *ts
 
   int threadsPerBlock = 4;
   int blocksPerGird = N;
-  int blocks = threadsPerBlock;
-  int grids = N;
 //  dim3 blocks(threadsPerBlock, 1);
 //  dim3 grids(blocksPerGird, 1);
   //int blocks = N;
@@ -278,7 +276,7 @@ run_ols(const double *G, const double *Y, int n, int p, double *coef, double *ts
   //dim3 grids((N+15)/16,(N+15)/16);
   //int numBlocks = (N+15)/16;
   //ols_kernel<<<1, 1>>>(d_X, n, p, d_Y, d_coef, d_tscore);
-  ols_kernel<<<grids, blocks>>>(d_G, n, p, d_Y, d_coef, d_tscore, N);
+  ols_kernel<<<blocksPerGird, threadsPerBlock>>>(d_G, n, p, d_Y, d_coef, d_tscore, N);
   cudaDeviceSynchronize();
   ERRCHECK;
 
@@ -301,7 +299,10 @@ main(int argc, char **argv)
   r = gsl_rng_alloc(T);
 
   int N, n, p = 4;
-  N = 100;
+  N = 3;
+  n = 4;
+  /*
+  N = 4;
   n = 305;
 
   double *A = (double*)malloc(sizeof(double)*n*N);
@@ -317,30 +318,30 @@ main(int argc, char **argv)
     printf("pvalue malloc error");
   if (!coef)
     printf("coef malloc error");
-
+  */
+  /*
   for (size_t i = 0; i < n; i++)
   {
     for (size_t j = 0; j < N; j++)
       A[j + i*N] = gsl_rng_uniform(r);
     B[i] = gsl_rng_uniform(r);
   }
+  */
 
 
-  /*
   double A[] = {1, 3, 4, 5, 2, 3, 5, 4, 3, 6, 7, 9};
   double B[] = {1, 2, 3, 4};
   double coef[4*3];
   double pvalue[4*3];
-  */
-  run_ols(A, B, n, p, coef, pvalue, N);
 
+  run_ols(A, B, n, p, coef, pvalue, N);
+  /*
   gsl_matrix_view m = gsl_matrix_view_array(coef,(N*(N-1))/2, p);
-  printf("%d, %d\n", (&m.matrix)->size1, (&m.matrix)->size2);
   free(A);
   free(B);
   free(pvalue);
   free(coef);
-  /*
+  */
   printf("beta0 = %f; pvalue = %f\n", coef[0], pvalue[0]);
   printf("beta1 = %f; pvalue = %f\n", coef[1], pvalue[1]);
   printf("beta2 = %f; pvalue = %f\n", coef[2], pvalue[2]);
@@ -355,7 +356,7 @@ main(int argc, char **argv)
   printf("beta1 = %f; pvalue = %f\n", coef[9], pvalue[9]);
   printf("beta2 = %f; pvalue = %f\n", coef[10], pvalue[10]);
   printf("beta3 = %f; pvalue = %f\n", coef[11], pvalue[11]);
-  */
+
 
   return 0;
 }

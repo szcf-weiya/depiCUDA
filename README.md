@@ -11,3 +11,7 @@ GPU version of depi
 
 1. 当改成share memory,在block为1的情况下,可以正确输出结果
 2. 当直接用global memory时,都是可以正确输出结果的.
+
+kernel0808.cu已经正确
+
+![](res_0808.png)

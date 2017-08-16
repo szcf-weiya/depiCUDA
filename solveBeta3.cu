@@ -10,7 +10,7 @@
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_matrix.h>
 
-__device__ inline int solveBeta(int tid,
+__device__  int solveBeta(int tid,
                           int n, int p,
                           const double *d_X,
                           const double *d_Y,
@@ -29,10 +29,6 @@ __device__ inline int solveBeta(int tid,
 
   double *d_XX = (double *)malloc(sizeof(double)*p*p);
   double *d_coef2 = (double *)malloc(sizeof(double)*p);
-  memset(d_coef2, 0.0, sizeof(double)*p);
-  memset(d_coef, 0.0, sizeof(double)*p);
-  memset(d_XX, 0.0, sizeof(double)*p*p);
-
 
   double **a = (double **)malloc(sizeof(double *));
   *a = d_XX;
@@ -108,12 +104,15 @@ __global__ void kernel(int n, int p,
   double *d_Gcoef)
 {
   int tid = threadIdx.x + blockIdx.x*blockDim.x;
-  //printf("%d\n", tid);
-  double *d_coef = (double*)malloc(sizeof(double)*p);
-  double *d_invXX = (double*)malloc(sizeof(double)*p*p);
-  //__syncthreads(); // must add
-  solveBeta(tid, n, p, d_X, d_Y, d_invXX, d_coef);
-  //__syncthreads(); // must add
+  __shared__ double *d_coef, *d_invXX;
+  if (threadIdx.x == 0)
+  {
+    d_coef = (double*)malloc(sizeof(double)*p*blockDim.x);
+    d_invXX = (double*)malloc(sizeof(double)*p*p*blockDim.x);
+  }
+  __syncthreads(); // must add
+  solveBeta(tid, n, p, d_X, d_Y, d_invXX+threadIdx.x*p*p, d_coef+threadIdx.x*p);
+  __syncthreads(); // must add
   /*
   if (res != 0)
   {
@@ -129,22 +128,27 @@ __global__ void kernel(int n, int p,
     d_Gcoef[tid*p+i] = d_coef[i];
   }
   //printf("tid = %d; inv = %f, %f, %f; beta = %f, %f, %f\n", tid, d_invXX[0], d_invXX[4], d_invXX[8], d_coef[0], d_coef[1], d_coef[2]);
-  //__syncthreads();
-  free(d_coef);
-  free(d_invXX);
+  __syncthreads();
+  if(threadIdx.x == 0)
+  {
+    free(d_coef);
+    free(d_invXX);
+  }
 }
 
 int main(int argc, char const *argv[]) {
-  /* code */
+  cudaDeviceReset();
   //double A[] = {1, 2, 3, 0, 2, 4, 2, 1, 5};
   double A[] = {1, 1, 1, 1, 2, 3, 5, 4, 3, 6, 7, 9};
   double B[] = {1, 2, 3, 4};
   double *d_A, *d_B, *d_invXX, *d_coef;
+
   int threadsPerBlock = 32;
   int blocksPerGird = 1;
   // Set a heap size of 128 megabytes. Note that this must
   // be done before any kernel is launched.
   //cudaThreadSetLimit(cudaLimitMallocHeapSize, 1024*1024*1024);
+
   cudaDeviceSynchronize();
   double coef[3*threadsPerBlock*blocksPerGird];
   cudaMalloc((void**)&d_A, sizeof(double)*12);
