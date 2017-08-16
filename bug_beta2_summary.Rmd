@@ -69,3 +69,12 @@ int main(int argc, char const *argv[]) {
 ![](bug_beta2_res.png)
 
 所以我想知道这种情况是因为精度原因，还是什么其他的原因？
+
+加上下面
+```
+double *d_coef = (double*)malloc(sizeof(double)*p);
+memset(d_coef, 0.0, sizeof(double)*p);
+```
+只有一个正确值.
+
+难道只能通过kernel赋值过去???
