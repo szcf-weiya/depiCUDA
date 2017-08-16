@@ -144,7 +144,11 @@ int main(int argc, char const *argv[]) {
   int blocksPerGird = 1;
   // Set a heap size of 128 megabytes. Note that this must
   // be done before any kernel is launched.
-  cudaThreadSetLimit(cudaLimitMallocHeapSize, 1024*1024*1024);
+  //cudaThreadSetLimit(cudaLimitMallocHeapSize, 1024*1024*1024);
+  int limit;
+  cudaThreadGetLimit(&limit, cudaLimitMallocHeapSize);
+  printf("%d\n", limit);
+  cudaDeviceSynchronize();
   double coef[3*threadsPerBlock*blocksPerGird];
   cudaMalloc((void**)&d_A, sizeof(double)*12);
   cudaMalloc((void**)&d_B, sizeof(double)*4);
