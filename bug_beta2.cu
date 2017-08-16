@@ -77,10 +77,10 @@ int main(int argc, char const *argv[]) {
 
   int n = 4, p = 3;
   int threadsPerBlock = 256;
-  int blocksPerGird = 30;
+  int blocksPerGird = 40;
 
   double *res = (double*)malloc(sizeof(double)*p*blocksPerGird*threadsPerBlock);
-
+  //cudaDeviceReset();
   size_t limit_stack, limit_printf, limit_heap;
   cudaThreadGetLimit(&limit_stack, cudaLimitStackSize);
   cudaThreadGetLimit(&limit_printf, cudaLimitPrintfFifoSize);
